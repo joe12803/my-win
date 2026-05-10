@@ -1,0 +1,58 @@
+name: Windows RDP via QEMU
+
+on: 
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Preparing QEMU and Network Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install qemu-kvm cpulimit -y
+
+      - name: Download Windows Image and Drivers
+        run: |
+          # 常用镜像下载（注意：仅供技术研究，镜像链接可能失效）
+          # 这里推荐一个社区常用的 Gist 或者公开的预制镜像
+          curl -L -o windows.gz "https://github.com/kmille7/vps-to-windows/releases/download/v1.0/win10_light.gz"
+          gunzip windows.gz
+          # 结果为 windows (raw 镜像)
+
+      - name: Setup Ngrok
+        run: |
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt-get update && sudo apt-get install ngrok
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+
+      - name: Start Windows VM
+        run: |
+          # 启动 ngrok 隧道映射 3389 端口
+          nohup ngrok tcp 3389 &
+          sleep 10
+          
+          # 获取 ngrok 公网地址
+          export NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "=========================================="
+          echo "RDP Address: $NGROK_URL"
+          echo "User: Administrator"
+          echo "Pass: Password123 (取决于镜像默认密码)"
+          echo "=========================================="
+
+          # 启动 QEMU 虚拟机
+          # 这里的参数根据 Action 机器性能调整，通常 4G RAM, 2 CPU
+          qemu-system-x86_64 \
+            -m 4G \
+            -smp 2 \
+            -drive file=windows,format=raw \
+            -net nic -net user,hostfwd=tcp::3389-:3389 \
+            -vga virtio \
+            -display none &
+          
+          # 保持运行 6 小时
+          sleep 21600
